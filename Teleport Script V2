@@ -1,0 +1,308 @@
+-- ================= LOAD RAYFIELD =================
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+-- ================= SERVICES =================
+local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= WINDOW =================
+local Window = Rayfield:CreateWindow({
+    Name = "TP HUB | Teleport System (ระบบวาปผู้เล่น)",
+    LoadingTitle = "Loading TP HUB (กำลังโหลด)",
+    LoadingSubtitle = "Rayfield UI",
+    ToggleUIKeybind = "K",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "TPHubThai",
+        FileName = "Config"
+    }
+})
+
+-- ================= TAB =================
+local TeleportTab = Window:CreateTab(
+    "Teleport (วาป)", 
+    4483362458
+)
+
+-- ================= VARIABLES =================
+local selectedPlayer
+local offsetMode = "Front (ด้านหน้า)"
+local tpMode = "Instant Teleport (วาปทันที)"
+local distance = 5
+
+local lookAtTargetEnabled = false
+local followConnection
+
+-- 🔁 LOOP ALL
+local loopAllEnabled = false
+local loopTask
+local loopDelay = 0.25 -- Hold Time Per Player (เวลาค้างต่อผู้เล่น)
+
+local teamFilterMode = "All Teams (ทั้งหมด)"
+local selectedTeamName
+
+-- ================= HELPERS =================
+local function getHRP(plr)
+    local char = plr.Character or plr.CharacterAdded:Wait()
+    return char:WaitForChild("HumanoidRootPart")
+end
+
+local function getPlayerList()
+    local t = {}
+    for _,p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(t, p.Name)
+        end
+    end
+    return t
+end
+
+-- ================= OFFSET =================
+local function getOffsetCF(targetHRP)
+    local look = targetHRP.CFrame.LookVector
+
+    if offsetMode == "Front (ด้านหน้า)" then
+        return targetHRP.CFrame + (look * distance)
+    elseif offsetMode == "Back (ด้านหลัง)" then
+        return targetHRP.CFrame - (look * distance)
+    elseif offsetMode == "Above (ด้านบน)" then
+        return targetHRP.CFrame + Vector3.new(0, distance, 0)
+    elseif offsetMode == "Below (ใต้เท้า)" then
+        return targetHRP.CFrame - Vector3.new(0, distance, 0)
+    end
+
+    return targetHRP.CFrame
+end
+
+-- ================= LOOK AT TARGET =================
+local function applyLookAt(myHRP, targetHRP)
+    if not lookAtTargetEnabled then return end
+
+    local myPos = myHRP.Position
+    local targetPos = Vector3.new(
+        targetHRP.Position.X,
+        myPos.Y,
+        targetHRP.Position.Z
+    )
+
+    myHRP.CFrame = CFrame.lookAt(myPos, targetPos)
+end
+
+-- ================= STOP FOLLOW =================
+local function stopFollow()
+    if followConnection then
+        followConnection:Disconnect()
+        followConnection = nil
+    end
+end
+
+-- ================= SINGLE TELEPORT =================
+local function startTeleport()
+    stopFollow()
+    if not selectedPlayer then return end
+
+    local plr = Players:FindFirstChild(selectedPlayer)
+    if not (plr and plr.Character) then return end
+
+    local targetHRP = getHRP(plr)
+    local myHRP = getHRP(LocalPlayer)
+
+    if tpMode == "Instant Teleport (วาปทันที)" then
+        myHRP.CFrame = getOffsetCF(targetHRP)
+        applyLookAt(myHRP, targetHRP)
+
+    elseif tpMode == "Tween Teleport (วาปเนียน)" then
+        local tween = TweenService:Create(
+            myHRP,
+            TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {CFrame = getOffsetCF(targetHRP)}
+        )
+        tween:Play()
+        tween.Completed:Once(function()
+            applyLookAt(myHRP, targetHRP)
+        end)
+
+    elseif tpMode == "Follow Loop (ติดตาม)" then
+        followConnection = RunService.Heartbeat:Connect(function()
+            if not plr.Character then stopFollow() return end
+            myHRP.CFrame = getOffsetCF(targetHRP)
+            applyLookAt(myHRP, targetHRP)
+        end)
+    end
+end
+
+-- ================= TEAM FILTER =================
+local function passTeam(plr)
+    if teamFilterMode == "All Teams (ทั้งหมด)" then
+        return true
+    end
+
+    if not plr.Team or not LocalPlayer.Team then
+        return false
+    end
+
+    if teamFilterMode == "Same Team (ทีมเดียวกับเรา)" then
+        return plr.Team == LocalPlayer.Team
+    elseif teamFilterMode == "Enemy Team (ทีมศัตรู)" then
+        return plr.Team ~= LocalPlayer.Team
+    elseif teamFilterMode == "Select Team (เลือกทีมเอง)" then
+        return plr.Team.Name == selectedTeamName
+    end
+
+    return false
+end
+
+-- ================= LOOP ALL PLAYERS =================
+local function startLoopAll()
+    if loopTask then return end
+
+    loopTask = task.spawn(function()
+        while loopAllEnabled do
+            local myHRP = getHRP(LocalPlayer)
+
+            for _,plr in pairs(Players:GetPlayers()) do
+                if not loopAllEnabled then break end
+
+                if plr ~= LocalPlayer and plr.Character and passTeam(plr) then
+                    local hrp = getHRP(plr)
+                    myHRP.CFrame = getOffsetCF(hrp)
+                    applyLookAt(myHRP, hrp)
+                    task.wait(loopDelay)
+                end
+            end
+
+            task.wait(0.1)
+        end
+        loopTask = nil
+    end)
+end
+
+-- ================= UI =================
+TeleportTab:CreateSection("Single Teleport (วาปรายคน)")
+
+local PlayerDropdown = TeleportTab:CreateDropdown({
+    Name = "Select Player (เลือกผู้เล่น)",
+    Options = getPlayerList(),
+    Callback = function(v)
+        selectedPlayer = v[1]
+    end
+})
+
+TeleportTab:CreateButton({
+    Name = "Refresh Player List (รีเฟรชรายชื่อผู้เล่น)",
+    Callback = function()
+        PlayerDropdown:Refresh(getPlayerList())
+    end
+})
+
+TeleportTab:CreateDropdown({
+    Name = "Teleport Position (ตำแหน่งวาป)",
+    Options = {
+        "Front (ด้านหน้า)",
+        "Back (ด้านหลัง)",
+        "Above (ด้านบน)",
+        "Below (ใต้เท้า)"
+    },
+    CurrentOption = {"Front (ด้านหน้า)"},
+    Callback = function(v)
+        offsetMode = v[1]
+    end
+})
+
+TeleportTab:CreateSlider({
+    Name = "Distance (ระยะห่าง)",
+    Range = {3,20},
+    Increment = 1,
+    CurrentValue = distance,
+    Callback = function(v)
+        distance = v
+    end
+})
+
+TeleportTab:CreateDropdown({
+    Name = "Teleport Mode (โหมดวาป)",
+    Options = {
+        "Instant Teleport (วาปทันที)",
+        "Tween Teleport (วาปเนียน)",
+        "Follow Loop (ติดตาม)"
+    },
+    CurrentOption = {"Instant Teleport (วาปทันที)"},
+    Callback = function(v)
+        tpMode = v[1]
+        stopFollow()
+    end
+})
+
+TeleportTab:CreateToggle({
+    Name = "Lock Face Target (ล็อกหันหน้าเป้าหมาย)",
+    CurrentValue = false,
+    Callback = function(v)
+        lookAtTargetEnabled = v
+    end
+})
+
+TeleportTab:CreateButton({
+    Name = "Start Teleport (เริ่มวาป)",
+    Callback = startTeleport
+})
+
+TeleportTab:CreateButton({
+    Name = "Stop Follow (หยุดติดตาม)",
+    Callback = stopFollow
+})
+
+TeleportTab:CreateSection("Loop Teleport (วาปทั้งหมด)")
+
+TeleportTab:CreateSlider({
+    Name = "Hold Time Per Player (เวลาค้างต่อผู้เล่น)",
+    Range = {0.1,3},
+    Increment = 0.05,
+    CurrentValue = loopDelay,
+    Callback = function(v)
+        loopDelay = v
+    end
+})
+
+TeleportTab:CreateDropdown({
+    Name = "Team Filter (ตัวกรองทีม)",
+    Options = {
+        "All Teams (ทั้งหมด)",
+        "Same Team (ทีมเดียวกับเรา)",
+        "Enemy Team (ทีมศัตรู)",
+        "Select Team (เลือกทีมเอง)"
+    },
+    CurrentOption = {"All Teams (ทั้งหมด)"},
+    Callback = function(v)
+        teamFilterMode = v[1]
+    end
+})
+
+local function getTeamNames()
+    local t = {}
+    for _,team in pairs(Teams:GetTeams()) do
+        table.insert(t, team.Name)
+    end
+    return t
+end
+
+TeleportTab:CreateDropdown({
+    Name = "Select Team Name (เลือกชื่อทีม)",
+    Options = getTeamNames(),
+    Callback = function(v)
+        selectedTeamName = v[1]
+    end
+})
+
+TeleportTab:CreateToggle({
+    Name = "Loop All Players (ลูปวาปผู้เล่นทั้งหมด)",
+    CurrentValue = false,
+    Callback = function(v)
+        loopAllEnabled = v
+        if v then
+            startLoopAll()
+        end
+    end
+})
